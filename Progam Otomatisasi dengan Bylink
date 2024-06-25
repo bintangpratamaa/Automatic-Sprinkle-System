@@ -1,0 +1,184 @@
+#include <ESP8266WiFi.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+# include <ArduinoJson.h>
+#include <WiFiUdp.h>
+#include <WiFiClientSecure.h>
+#include <BlynkSimpleEsp8266.h>
+
+#define SCREEN_WIDTH 128    // OLED display width, in pixels
+#define SCREEN_HEIGHT 64    // OLED display height, in pixels
+#define OLED_RESET -1       // Reset pin # (or -1 if sharing Arduino reset pin)
+#define LED D0
+#define BLYNK_AUTH_TOKEN "LJo93-6gIMq3SMtM2vK8u76n7Fp047EW"
+#define BLYNK_PRINT Serial
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+const char *ssid = "";     // replace with your wifi ssid and wpa2 key
+const char *pass = "";
+const char* host = "script.google.com";
+const int httpsPort = 443;
+char auth[] = BLYNK_AUTH_TOKEN;
+
+const int sensor_pin = A0;  // Connect Soil moisture analog sensor pin to A0 of NodeMCU 
+const int motor_Pin = D0; // connect output rellay
+
+WiFiClientSecure client;
+
+// Declare global variables
+int moisture_percentage;
+int te;
+BlynkTimer timer;
+
+void setup() {
+  pinMode(LED, OUTPUT);
+  pinMode(motor_Pin, OUTPUT);
+  Serial.begin(115200);
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C); //initialize with the I2C addr 0x3C (128x64)
+  display.clearDisplay();
+  delay(10);
+
+  Serial.println("Connecting to ");
+  Serial.println(ssid);
+
+  display.clearDisplay();
+  display.setCursor(0,0);  
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.println("Connecting to ");
+  display.setTextSize(2);
+  display.print(ssid);
+  display.display();
+
+  WiFi.begin(ssid, pass);
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+
+  display.clearDisplay();
+  display.setCursor(0,0);  
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.print("WiFi connected");
+  display.display();
+  delay(4000);
+
+  Blynk.begin(auth, ssid, pass, "blynk.cloud", 80);
+  timer.setInterval(2500L, sendSensor);
+
+  client.setInsecure();  // Add this line to make the connection insecure
+}
+
+void loop() 
+{
+  int sar = digitalRead(motor_Pin);
+  te = 0;
+  moisture_percentage = ( 100.00 - ( (analogRead(sensor_pin)/1023.00) * 100.00 ) );
+
+  Serial.print("Soil Moisture(in Percentage) = ");
+  Serial.print(moisture_percentage);
+  Serial.print(te);
+  Serial.println("%");
+  if (moisture_percentage < 30){
+    digitalWrite(motor_Pin, LOW);
+    te+=1;
+  } else {
+    digitalWrite(motor_Pin, HIGH);
+    te=0;
+  }
+
+  display.clearDisplay();
+  display.setCursor(0,0);  //oled display
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.println("Soil Moisture Monitor");
+
+  display.setCursor(40,20);  //oled display
+  display.setTextSize(2);
+  display.setTextColor(WHITE);
+  display.print(moisture_percentage);
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  display.println(" %");
+  display.display();
+
+  // Send data to Google Sheets
+  senddata();
+  // send data to blynk
+  Blynk.run();
+  timer.run();
+}
+
+void senddata(){
+  Serial.println("==========");
+  Serial.print("connecting to ");
+  Serial.println(host);
+  
+  //----------------------------------------Connect to Google host
+  if (!client.connect(host, httpsPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+  //----------------------------------------Processing data and sending data
+
+  String string_soil =  String(moisture_percentage);
+  String string_me =  String(te);
+  String url = #Link spreadsheet
+  Serial.print("requesting URL: ");
+  Serial.println(url);
+ 
+  client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+         "Host: " + host + "\r\n" +
+         "User-Agent: BuildFailureDetectorESP8266\r\n" +
+         "Connection: close\r\n\r\n");
+ 
+  Serial.println("request sent");
+  //----------------------------------------
+ 
+  //----------------------------------------Checking whether the data was sent successfully or not
+  while (client.connected()) {
+    String line = client.readStringUntil('\n');
+    if (line == "\r") {
+      Serial.println("headers received");
+      break;
+    }
+  }
+  String line = client.readStringUntil('\n');
+  if (line.startsWith("{\"state\":\"success\"")) {
+    Serial.println("esp8266/Arduino CI successfull!");
+  } else {
+    Serial.println("esp8266/Arduino CI has failed");
+  }
+  Serial.print("reply was : ");
+  Serial.println(line);
+  Serial.println("closing connection");
+  Serial.println("==========");
+  Serial.println();
+}
+
+void sendSensor(){
+  int ba = moisture_percentage;
+  int me = te; 
+  
+  Blynk.virtualWrite(V0, ba);
+  Blynk.virtualWrite(V1, me);
+  
+  Serial.print("kelembababan : ");
+  Serial.print(ba);
+  Serial.print("|| machine : ");
+  Serial.println(me);
+
+
+  if(ba > 30){
+    //Blynk.email, "Alert", "Temperature over 30C!");
+    Blynk.logEvent("notifikasi","Suhu diatas 30 Derajat celcius");
+  }
+}
